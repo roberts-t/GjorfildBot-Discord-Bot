@@ -6,7 +6,7 @@ import config.database as config_db
 class Log:
 
     def __init__(self, db = None):
-        self.file = open("log_file.txt", "a")
+        self.file = open("logs/log_file.txt", "a")
         self.db = db
         self.db_cursor = db.cursor()
 
