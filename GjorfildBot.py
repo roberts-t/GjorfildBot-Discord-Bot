@@ -27,12 +27,16 @@ import time
 import mysql.connector
 from bs4 import BeautifulSoup
 
+from classes.pmlp.Pmlp import Pmlp
+
 LOG_TYPE_INFO = 'info'
 LOG_TYPE_ERROR = 'error'
 
+pmlp_notif_enabled = True
 new_rank_icons_enabled = True
 last_game_account_ids = []
 last_game_summoners = []
+last_game_data_gathered = False
 last_game_data_gathered = False
 last_game_champion_ids = []
 last_game_champions = {}
@@ -63,6 +67,7 @@ async def on_ready():
     global activity_task
     await resource_version_check()
     await id_update_check()
+    await schedule_pmlp_check()
     # await create_mood_message(client.get_channel(815994895402795048), True)
     logger.log(LOG_TYPE_INFO, 'on_ready', 'Bot is ready!')
 
@@ -1190,6 +1195,65 @@ async def mood(ctx, emoji):
     except Exception as e:
         logger.log(LOG_TYPE_ERROR, 'mood', str(e))
 
+async def pmlp_check():
+    global pmlp_notif_enabled
+    if pmlp_notif_enabled:
+        pmlp = Pmlp(logger)
+        bookings = pmlp.request(9)
+        pmlp.close()
+        available_booking = bookings.get_available_booking()
+
+        if available_booking is not None:
+            channel = client.get_channel(505410172819079169)
+            logger.log(LOG_TYPE_INFO, 'pmlp_check', 'Sending booking notification, booking:' + available_booking.get_booking())
+            await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+
+async def schedule_pmlp_check():
+    global pmlp_notif_enabled
+    # Run first time
+    if pmlp_notif_enabled:
+        await pmlp_check()
+
+    # 1 h 15 mins before another pmlp check in day time
+    day_wait = 4500
+    # 3 h before another pmlp check in night time
+    night_wait = 10800
+
+    now = datetime.datetime.now().time()
+    night_start = datetime.time(1, 0, 0)
+    night_end = datetime.time(6, 30, 0)
+
+    if night_start <= now < night_end:
+        dt_now = datetime.datetime.combine(datetime.date.today(), now)
+        dt_night_end = datetime.datetime.combine(datetime.date.today(), night_end)
+        till_night_end = int((dt_night_end-dt_now).total_seconds())
+        # Check if till night end is less time than night wait
+        if till_night_end < night_wait:
+            if till_night_end > 0:
+                wait = till_night_end + 30
+            else:
+                wait = day_wait
+        else:
+            wait = night_wait
+    else:
+        wait = day_wait
+
+    while pmlp_notif_enabled:
+        await asyncio.sleep(wait)
+        await pmlp_check()
+
+@client.command()
+async def pmlp(ctx):
+    global pmlp_notif_enabled
+    pmlp_notif_enabled = not pmlp_notif_enabled
+
+    if pmlp_notif_enabled:
+        ctx.send('PMLP notifications enabled! :white_check_mark:')
+        await schedule_pmlp_check()
+    else:
+        ctx.send('PMLP notifications disabled! :x:')
+
+
 @client.command()
 async def help(ctx):
     embed_msg = discord.Embed(title="Bot commands", color=15158332)
@@ -1206,6 +1270,7 @@ async def help(ctx):
     embed_msg.add_field(name="!summoner [new_summoner_name]", value="Change your summoner name in Gjorfilds settings",inline=False)
     embed_msg.add_field(name="!summoners [roboobox_summoner_name, enchanteddragon_summoner_name]",value="Change both names in Gjorfilds settings", inline=False)
     embed_msg.add_field(name="!premades", value="Returns premades from current or last game", inline=False)
+    embed_msg.add_field(name="!pmlp", value="Enable or Disable PMLP booking notifications", inline=False)
 
     await ctx.send(embed=embed_msg)
 
@@ -1749,7 +1814,7 @@ enchanted_discord_id = config.enchanted_discord_id
 roboobox_discord_id = config.roboobox_discord_id
 
 # Gjorfild_Bot
-# client.run(config.discord_api_key)
+client.run(config.discord_api_key)
 
 # DevBot
-client.run(config.discord_dev_api_key)
+# client.run(config.discord_dev_api_key)
