@@ -1199,7 +1199,7 @@ async def pmlp_check():
     global pmlp_notif_enabled
     if pmlp_notif_enabled:
         pmlp = Pmlp(logger)
-        bookings = pmlp.request(9)
+        bookings = pmlp.request(10)
         pmlp.close()
         available_booking = bookings.get_available_booking()
 
@@ -1214,8 +1214,8 @@ async def schedule_pmlp_check():
     if pmlp_notif_enabled:
         await pmlp_check()
 
-    # 1 h 15 mins before another pmlp check in day time
-    day_wait = 4500
+    # 30 mins before another pmlp check in day time
+    day_wait = 1800
     # 3 h before another pmlp check in night time
     night_wait = 10800
 
@@ -1239,6 +1239,7 @@ async def schedule_pmlp_check():
         wait = day_wait
 
     while pmlp_notif_enabled:
+        logger.log(LOG_TYPE_INFO, 'schedule_pmlp_check','Scheduled PMLP check after ' + str(wait) + ' second sleep, current time: ' + datetime.now().strftime("%H:%M:%S"))
         await asyncio.sleep(wait)
         await pmlp_check()
 
@@ -1249,8 +1250,10 @@ async def pmlp(ctx):
 
     if pmlp_notif_enabled:
         ctx.send('PMLP notifications enabled! :white_check_mark:')
+        logger.log(LOG_TYPE_INFO, 'pmlp', 'PMLP notifications enabled by command!')
         await schedule_pmlp_check()
     else:
+        logger.log(LOG_TYPE_INFO, 'pmlp', 'PMLP notifications disabled by command!')
         ctx.send('PMLP notifications disabled! :x:')
 
 
