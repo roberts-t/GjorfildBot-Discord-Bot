@@ -1510,7 +1510,7 @@ async def play(ctx, *url):
 
             def play_next(error = None):
                 source = playlist.next(False)
-                if source is not None and not playlist.is_stopped:
+                if source is not None and not playlist.is_stopped and ctx.guild.voice_client is not None:
                     voice.play(FFmpegPCMAudio(source, **FFMPEG_OPTIONS), after=play_next)
 
             if ctx.guild.voice_client is None:
@@ -1579,9 +1579,9 @@ async def queue(ctx):
                         queue_string += "\n\n " + str(len(queue) - 10) + " more track/s"
                         break
                     if audio.is_search:
-                        queue_string += "\nā™«) " + audio.title
+                        queue_string += "\n♫) " + audio.title
                     else:
-                        queue_string += "\nā™«) [" + audio.title + "](" + audio.url + ")"
+                        queue_string += "\n♫) [" + audio.title + "](" + audio.url + ")"
                     i += 1
             embed_msg = discord.Embed(title="Queue:", description=queue_string, color=music_embed_color)
             await ctx.send(embed=embed_msg)

@@ -27,12 +27,16 @@ class Audio:
     def retrieve_audio_data(self, YDL_OPTIONS):
         try:
             yt_downloader = yt_dlp.YoutubeDL(YDL_OPTIONS)
-            self.yt_info = yt_downloader.extract_info(self.url, download=False)
+            if self.is_search:
+                self.yt_info = yt_downloader.extract_info(f"ytsearch:{self.url}", download=False)
+            else:
+                self.yt_info = yt_downloader.extract_info(self.url, download=False)
+            yt_downloader.sanitize_info(self.yt_info)
             if self.is_search:
                 # Get first result
                 if 'entries' in self.yt_info:
                     self.title = self.yt_info['entries'][0]['title']
-                    self.info = self.yt_info['entries'][0]["formats"][0]
+                    self.info = self.yt_info['entries'][0]
                     self.id = self.yt_info['entries'][0]['id']
                     self.url = self.yt_info['entries'][0]['webpage_url']
                 elif 'formats' in self.yt_info:
