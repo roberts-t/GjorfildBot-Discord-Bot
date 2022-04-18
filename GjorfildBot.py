@@ -1817,7 +1817,7 @@ enchanted_discord_id = config.enchanted_discord_id
 roboobox_discord_id = config.roboobox_discord_id
 
 # Gjorfild_Bot
-#client.run(config.discord_api_key)
+client.run(config.discord_api_key)
 
 # DevBot
-client.run(config.discord_dev_api_key)
+# client.run(config.discord_dev_api_key)

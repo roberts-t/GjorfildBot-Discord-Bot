@@ -7,7 +7,7 @@ class SpotifyAPI:
         self.client_id = config.spotify_client_id
         self.client_secret = config.spotify_client_secret
         self.scope = scope
-        self.spotify = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=None, client_id=self.client_id, client_secret=self.client_secret, redirect_uri="http://localhost:8080"))
+        self.spotify = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=None, open_browser=False, client_id=self.client_id, client_secret=self.client_secret, redirect_uri="http://localhost:8080"))
         self.log = logger
 
     def get_playlist_titles(self, playlist_url: str):
@@ -39,8 +39,14 @@ class SpotifyAPI:
                 artists = ""
                 for artist  in track_info['album']['artists']:
                     artists += artist['name'] + ", "
-                self.log.log_music("info", 'get_track_title', 'Track info: ' + str(track_info['album']['name'] + " - " + artists[:-2]))
-                return track_info['album']['name'] + " - " + artists[:-2]
+
+                if track_info['name'] is not None and track_info['album']['name'] != track_info['name']:
+                    final_track_name = track_info['album']['name'] + " - " + track_info['name'] + " - " + artists[:-2]
+                else:
+                    final_track_name = track_info['album']['name'] + " - " + artists[:-2]
+
+                self.log.log_music("info", 'get_track_title', 'Track info: ' + str(final_track_name))
+                return final_track_name
         except Exception as e:
             self.log.log_music("error", 'get_track_title', str(e))
         return []
