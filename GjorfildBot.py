@@ -1206,7 +1206,16 @@ async def pmlp_check():
         if available_booking is not None:
             channel = client.get_channel(505410172819079169)
             logger.log(LOG_TYPE_INFO, 'pmlp_check', 'Sending booking notification, booking:' + available_booking.get_booking())
-            await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+            try:
+                await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+            except Exception as e:
+                logger.log(LOG_TYPE_ERROR, 'pmlp_check', str(e))
+                # Try sending backup message to dev channel
+                try:
+                    channel = client.get_channel(806602174700191757)
+                    await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                except Exception as e:
+                    logger.log(LOG_TYPE_ERROR, 'pmlp_check', "Backup message failed: " + str(e))
 
 async def schedule_pmlp_check():
     global pmlp_notif_enabled
@@ -1360,29 +1369,33 @@ async def schedule_activity_check():
 async def check_activity():
     global activity_task
     music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Performing activity check!')
-    if len(playlists) > 0:
-        music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Found active playlists!')
-        to_del = []
-        for channel_id, playlist in playlists.items():
-            channel = client.get_channel(int(channel_id))
-            voice = get(client.voice_clients, guild=channel.guild)
-            if voice:
-                if not voice.is_playing() and len(playlist.get_queue()) < 1:
+    try:
+        if len(playlists) > 0:
+            music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Found active playlists!')
+            to_del = []
+            for channel_id, playlist in playlists.items():
+                channel = client.get_channel(int(channel_id))
+                voice = get(client.voice_clients, guild=channel.guild)
+                if len(channel.members) < 2:
+                    music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Channel ' + str(channel_id) +' has insufficient connected members (' + str(len(channel.members)) + ')')
+                    if voice:
+                        voice.disconnect()
                     to_del.append(channel_id)
-                    await voice.disconnect()
-                elif len(channel.members) < 2:
-                    to_del.append(channel_id)
-                    await voice.disconnect()
-        music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Inactivity result: ' + str(to_del))
-        for channel_id in to_del:
-            del playlists[channel_id]
-        if len(playlists) == 0:
+                elif voice:
+                    if not voice.is_playing() and len(playlist.get_queue()) < 1:
+                        to_del.append(channel_id)
+                        await voice.disconnect()
+            music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Inactivity result: ' + str(to_del))
+            for channel_id in to_del:
+                del playlists[channel_id]
+            if len(playlists) == 0:
+                activity_task.cancel()
+                activity_task = None
+        elif len(playlists) == 0:
             activity_task.cancel()
             activity_task = None
-    elif len(playlists) == 0:
-        activity_task.cancel()
-        activity_task = None
-
+    except Exception as e:
+        logger.log(LOG_TYPE_ERROR, 'check_activity', str(e) + ' Traceback: ' + str(traceback.format_exc()))
 
 async def is_user_in_voice(ctx):
     if ctx.author.voice and ctx.author.voice.channel:
@@ -1795,7 +1808,10 @@ async def announce(ctx, channel_id, *message):
         channel = client.get_channel(int(channel_id))
         if channel:
             if len(message) > 0:
-                await channel.send(" ".join(message).replace('\\n', '\n'))
+                try:
+                    await channel.send(" ".join(message).replace('\\n', '\n'))
+                except Exception as e:
+                    music_log.log_music(LOG_TYPE_ERROR, 'announce', str(e))
             else:
                 await ctx.send(':x: Message is missing!')
         else:
