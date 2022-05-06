@@ -2,6 +2,7 @@
 from datetime import datetime
 import mysql.connector
 import config.database as config_db
+import config.config as config
 
 class Log:
 
@@ -31,6 +32,8 @@ class Log:
         return string_time
 
     def log(self, type, function, data, show_time=True):
+        if not config.production_env:
+            print(type.upper() + " (" + function + ") " + data)
         log_message = ""
         if show_time:
             log_message += self.get_time() + " | "
@@ -42,10 +45,9 @@ class Log:
         log_message += data
 
         log_message += '\n'
-        # print(log_message)
         self.file.write(log_message)
         self.file.flush()
-        #print(data)
+
         self.check_database_connection()
         sql = "INSERT INTO logs (log_time, log_type, log_function, log_data) VALUES (%s, %s, %s, %s)"
         val = (self.get_time_mysql(), type.upper(), function, data)
@@ -54,6 +56,8 @@ class Log:
         self.db.commit()
 
     def log_music(self, type, function, data):
+        if not config.production_env:
+            print(type.upper() + " (" + function + ") " + data)
         sql = "INSERT INTO music_logs (log_time, log_type, log_function, log_data) VALUES (%s, %s, %s, %s)"
         val = (self.get_time_mysql(), type.upper(), function, data)
         # Check for db connection
@@ -64,6 +68,8 @@ class Log:
         self.db.commit()
 
     def log_music_cmd(self, author, command, args, channel, time):
+        if not config.production_env:
+            print("Music cmd: " + author + " (" + channel + ") " + command)
         sql = "INSERT INTO music_commands (command, arguments, author, channel, time_sent) VALUES (%s, %s, %s, %s, %s)"
         val = (str(command), str(args), str(author), str(channel), str(time))
         # Check for db connection

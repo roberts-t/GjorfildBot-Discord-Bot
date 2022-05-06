@@ -67,7 +67,8 @@ async def on_ready():
     global activity_task
     await resource_version_check()
     await id_update_check()
-    await schedule_pmlp_check()
+    if config.production_env:
+        await schedule_pmlp_check()
     # await create_mood_message(client.get_channel(815994895402795048), True)
     logger.log(LOG_TYPE_INFO, 'on_ready', 'Bot is ready!')
 
@@ -1379,7 +1380,7 @@ async def check_activity():
                 if len(channel.members) < 2:
                     music_log.log_music(LOG_TYPE_INFO, 'check_activity', 'Channel ' + str(channel_id) +' has insufficient connected members (' + str(len(channel.members)) + ')')
                     if voice:
-                        voice.disconnect()
+                        await voice.disconnect()
                     to_del.append(channel_id)
                 elif voice:
                     if not voice.is_playing() and len(playlist.get_queue()) < 1:
@@ -1833,7 +1834,9 @@ enchanted_discord_id = config.enchanted_discord_id
 roboobox_discord_id = config.roboobox_discord_id
 
 # Gjorfild_Bot
-client.run(config.discord_api_key)
+if config.production_env:
+    client.run(config.discord_api_key)
 
 # DevBot
-# client.run(config.discord_dev_api_key)
+if not config.production_env:
+    client.run(config.discord_dev_api_key)
