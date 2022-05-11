@@ -21,7 +21,7 @@ class Booking:
 
     def get_info(self):
         date = datetime.fromisoformat(self.date)
-        locale.setlocale(locale.LC_ALL, 'lv-LV')
+        locale.setlocale(locale.LC_ALL, 'lv_LV.utf8')
         return self.date + " (" + date.strftime('%A').capitalize() + ") **" + self.time + "**"
 
     def get_booking(self):
