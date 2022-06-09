@@ -1208,13 +1208,13 @@ async def pmlp_check():
             channel = client.get_channel(505410172819079169)
             logger.log(LOG_TYPE_INFO, 'pmlp_check', 'Sending booking notification, booking:' + available_booking.get_booking())
             try:
-                await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/245 vai https://www.pmlp.gov.lv/lv/pieraksts')
             except Exception as e:
                 logger.log(LOG_TYPE_ERROR, 'pmlp_check', str(e))
                 # Try sending backup message to dev channel
                 try:
                     channel = client.get_channel(806602174700191757)
-                    await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/247 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                    await channel.send(':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/245 vai https://www.pmlp.gov.lv/lv/pieraksts')
                 except Exception as e:
                     logger.log(LOG_TYPE_ERROR, 'pmlp_check', "Backup message failed: " + str(e))
 
@@ -1259,12 +1259,12 @@ async def pmlp(ctx):
     pmlp_notif_enabled = not pmlp_notif_enabled
 
     if pmlp_notif_enabled:
-        ctx.send('PMLP notifications enabled! :white_check_mark:')
+        await ctx.send('PMLP notifications enabled! :white_check_mark:')
         logger.log(LOG_TYPE_INFO, 'pmlp', 'PMLP notifications enabled by command!')
         await schedule_pmlp_check()
     else:
         logger.log(LOG_TYPE_INFO, 'pmlp', 'PMLP notifications disabled by command!')
-        ctx.send('PMLP notifications disabled! :x:')
+        await ctx.send('PMLP notifications disabled! :x:')
 
 
 @client.command()
