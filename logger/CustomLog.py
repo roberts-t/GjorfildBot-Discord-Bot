@@ -10,6 +10,8 @@ class Log:
         self.file = open("logs/log_file.txt", "a")
         self.db = db
         self.db_cursor = db.cursor()
+        self.LOG_TYPE_ERROR = "error"
+        self.LOG_TYPE_INFO = "info"
 
     def check_database_connection(self):
         if not self.db.is_connected():
