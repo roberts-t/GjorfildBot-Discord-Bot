@@ -1,6 +1,6 @@
+# Discord imports
 from discord.ext import commands
 import discord
-# Discord imports
 import asyncio
 from discord import FFmpegPCMAudio
 from discord.utils import get
@@ -9,39 +9,22 @@ from discord.utils import get
 from classesMusic.Playlist import Playlist
 from classesMusic.Audio import Audio
 from classesMusic.SpotifyAPI import SpotifyAPI
+from classesMusic.TrackCollector import TrackCollector
+from classesMusic.AudioType import AudioType
 
 # Additional imports
-import re
-import yt_dlp
 import traceback
+import datetime
 
 
 class Music(commands.Cog):
     def __init__(self, client):
         self.client = client
-        self.url_regex = re.compile(
-            r'^(?:http|ftp)s?://'
-            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
-            r'localhost|'
-            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-            r'(?::\d+)?'
-            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
         self.playlists = dict()
         self.activity_task = None
-        self.currently_playing = None
         self.logger = client.logger
         self.spotify = SpotifyAPI(logger=self.logger)
-        self.YDL_OPTIONS = {'format': 'bestaudio/best',
-                            'exctractaudio': True,
-                            'nocheckcertificate': True,
-                            'ignoreerrors': False,
-                            'quiet': True,
-                            'noplaylist': True,
-                            'logtostderr': False,
-                            'no_warnings': True,
-                            'restrictfilenames': True,
-                            'default_search': 'auto',
-                            'source_address': '0.0.0.0'}
+        self.track_collector = TrackCollector(client.logger)
         self.FFMPEG_OPTIONS = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
             'options': '-vn',
@@ -69,7 +52,7 @@ class Music(commands.Cog):
                             await voice.disconnect()
                         to_del.append(channel_id)
                     elif voice:
-                        if not voice.is_playing() and len(playlist.get_queue()) < 1:
+                        if not voice.is_playing() and len(playlist.queue) < 1:
                             to_del.append(channel_id)
                             await voice.disconnect()
                 self.logger.log_music(self.logger.LOG_TYPE_INFO, 'check_activity', 'Inactivity result: ' + str(to_del))
@@ -77,10 +60,10 @@ class Music(commands.Cog):
                     del self.playlists[channel_id]
                 if len(self.playlists) == 0:
                     self.activity_task.cancel()
-                    activity_task = None
+                    self.activity_task = None
             elif len(self.playlists) == 0:
                 self.activity_task.cancel()
-                activity_task = None
+                self.activity_task = None
         except Exception as e:
             self.logger.log(self.logger.LOG_TYPE_ERROR, 'check_activity',
                             str(e) + ' Traceback: ' + str(traceback.format_exc()))
@@ -101,368 +84,423 @@ class Music(commands.Cog):
             await ctx.send(embed=embed_msg)
             return False
 
-    async def determine_url_type(self, url):
-        if ("youtube" in url or "youtu.be" in url) and ("list" in url or "playlist" in url):
-            return "yt-playlist"
-        elif "youtube" in url or "youtu.be" in url:
-            return "youtube"
-        elif "spotify" in url and re.match(self.url_regex, url):
-            if "/track/" in url:
-                return "sp-track"
-            elif "/playlist/" in url:
-                return "sp-playlist"
-            return "unsupported"
-        elif re.match(self.url_regex, url) is None:
-            return "search"
-        else:
-            return "unsupported"
+    async def get_audio_type_icon(self, audio_type: AudioType):
+        audio_type_guild = 926270803182514248
+        if audio_type == AudioType.Spotify_Playlist or audio_type == AudioType.Spotify_Track:
+            return str(discord.utils.get(self.client.get_guild(audio_type_guild).emojis, name="spotify")) + " "
+        elif audio_type == AudioType.Youtube_Playlist or audio_type == AudioType.Youtube_Track:
+            return str(discord.utils.get(self.client.get_guild(audio_type_guild).emojis, name="youtube")) + " "
+        elif audio_type == AudioType.Search:
+            return ":mag: "
+        return ""
 
-    async def get_playlist_urls(self, playlist_url):
-        video_urls = dict()
-        try:
-            dl_options = dict(self.YDL_OPTIONS)
-            dl_options['extract_flat'] = True
-            yt_downloader = yt_dlp.YoutubeDL(dl_options)
-            yt_info = yt_downloader.extract_info(playlist_url, download=False)
+    async def get_audio_type_short(self, audio_type: AudioType):
+        if audio_type == AudioType.Spotify_Playlist or audio_type == AudioType.Spotify_Track:
+            return "SP"
+        return "YT"
 
-            for info in yt_info['entries']:
-                video_urls[info['title']] = info['url']
-            self.logger.log_music(self.logger.LOG_TYPE_INFO, 'get_playlist_urls',
-                                  'Returning playlist urls: ' + str(video_urls))
-        except Exception as e:
-            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'get_playlist_urls', str(e))
-        return video_urls
+    async def get_queue_track_string(self, audio_num: int, audio: Audio):
+        return "\n" + str(audio_num) + ") " + await self.get_audio_type_icon(
+            audio.audio_type) + "[" + await self.get_audio_type_short(
+            audio.audio_type) + "](" + audio.source_url + ") | " + audio.title + " | [_" + audio.duration + "_]"
 
-    @commands.command(aliases=['p'])
-    async def play(self, ctx, *url):
-        audio = playlist_audios = playlist_titles = None
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
+    async def insert_track_in_queue(self, ctx, add_next: bool, pos: str, source):
         if await self.is_user_in_voice(ctx):
             try:
-                if len(url) == 0:
-                    return
                 channel = ctx.author.voice.channel
-                url = ' '.join(map(str, url))
-                url_type = await self.determine_url_type(url)
-
-                self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play', 'Url type detected: ' + str(url_type))
-
-                youtube_url = url
-                if url_type == "youtube" or url_type == "search":
-                    if url_type == "youtube":
-                        youtube_url = url.split("&list=")[0]
-
-                if url_type == "search":
-                    audio = Audio(youtube_url, True, logger=self.logger)
-                elif url_type == "youtube":
-                    audio = Audio(youtube_url, False, logger=self.logger)
-                elif url_type == "sp-track":
-                    audio = Audio(self.spotify.get_track_title(url), True, logger=self.logger)
-                elif url_type == "yt-playlist":
-                    playlist_audios = await self.get_playlist_urls(youtube_url)
-                elif url_type == "sp-playlist":
-                    playlist_titles = self.spotify.get_playlist_titles(url)
+                if channel is not None and channel.id in self.playlists and len(self.playlists[channel.id].queue) > 0:
+                    if len(source) < 1:
+                        embed_msg = discord.Embed(title="", description=":x: Please provide content to add to queue",
+                                                  color=self.client.embed_error)
+                        await ctx.send(embed=embed_msg)
+                        return
+                    playlist = self.playlists[channel.id]
+                    source = ' '.join(map(str, source))
+                    tracks = self.track_collector.get_audio_data(source)
+                    tracks.reverse()
+                    for track in tracks:
+                        if add_next:
+                            playlist.add_next(track)
+                        else:
+                            playlist.insert_after(int(pos), track)
+                    await ctx.message.add_reaction('✅')
                 else:
-                    raise Exception("Unsupported url type")
-
-                if channel.id in self.playlists:
-                    if url_type != "yt-playlist" and url_type != "sp-playlist":
-                        self.playlists[channel.id].add(audio)
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Adding to playlist: ' + str(audio.url))
-                    elif url_type == "yt-playlist":
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Adding from playlist: ' + str(playlist_audios.items())[:50])
-                        for title, url in playlist_audios.items():
-                            audio = Audio(url, False, title, logger=self.logger)
-                            self.playlists[channel.id].add(audio)
-                    elif url_type == "sp-playlist":
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Adding from playlist: ' + str(playlist_titles)[:50])
-                        for title in playlist_titles:
-                            audio = Audio(title, True, title, logger=self.logger)
-                            self.playlists[channel.id].add(audio)
-                else:
-                    if url_type != "yt-playlist" and url_type != "sp-playlist":
-                        self.playlists[channel.id] = Playlist(channel.id, audio, self.YDL_OPTIONS)
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Creating playlist (' + str(channel.id) + '): ' + str(audio.url))
-                    elif url_type == "yt-playlist":
-                        cnt = 0
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Creating playlist (' + str(channel.id) + ') from playlist: ' + str(
-                                                  playlist_audios.items())[:50])
-                        for title, url in playlist_audios.items():
-                            audio = Audio(url, False, title, logger=self.logger)
-                            if cnt == 0:
-                                self.playlists[channel.id] = Playlist(channel.id, audio, self.YDL_OPTIONS)
-                            else:
-                                self.playlists[channel.id].add(audio)
-                            cnt += 1
-                    elif url_type == "sp-playlist":
-                        cnt = 0
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play',
-                                              'Creating playlist (' + str(channel.id) + ') from playlist: ' + str(
-                                                  playlist_titles)[:50])
-                        for title in playlist_titles:
-                            audio = Audio(title, True, title, logger=self.logger)
-                            if cnt == 0:
-                                self.playlists[channel.id] = Playlist(channel.id, audio, self.YDL_OPTIONS)
-                            else:
-                                self.playlists[channel.id].add(audio)
-                            cnt += 1
-
-                playlist = self.playlists[channel.id]
-
-                if playlist.is_stopped:
-                    playlist.is_stopped = False
-
-                def play_next(error=None):
-                    source = playlist.next(False)
-                    if source is not None and not playlist.is_stopped and ctx.guild.voice_client is not None:
-                        voice.play(FFmpegPCMAudio(source, **self.FFMPEG_OPTIONS), after=play_next)
-
-                if ctx.guild.voice_client is None:
-                    self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play', 'Connecting to voice!')
-                    voice = await channel.connect()
-                else:
-                    voice = ctx.voice_client
-
-                if not voice.is_playing():
-                    if self.activity_task is None:
-                        self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play', 'Starting activity checking!')
-                        activity_task = asyncio.create_task(self.schedule_activity_check())
-                    play_next()
-                    if url_type != "yt-playlist" and url_type != "sp-playlist":
-                        embed_msg = discord.Embed(title="",
-                                                  description="Queued: :musical_note: **" + audio.title + "** :musical_note:",
-                                                  color=self.client.embed_default)
-                    else:
-                        track_count = 0
-                        if url_type == "yt-playlist":
-                            track_count = str(len(playlist_audios))
-                        elif url_type == "sp-playlist":
-                            track_count = str(len(playlist_titles))
-                        embed_msg = discord.Embed(title="",
-                                                  description="Queued: :notes: **" + str(
-                                                      track_count) + " tracks** :notes:",
-                                                  color=self.client.embed_default)
-                    await ctx.send(embed=embed_msg)
-                else:
-                    if url_type != "yt-playlist" and url_type != "sp-playlist":
-                        audio.retrieve_audio_data(self.YDL_OPTIONS)
-                        embed_msg = discord.Embed(title="",
-                                                  description="Added to the queue: :arrow_right: **" + audio.title + "**",
-                                                  color=self.client.embed_default)
-                    else:
-                        track_count = 0
-                        if url_type == "yt-playlist":
-                            track_count = str(len(playlist_audios))
-                        elif url_type == "sp-playlist":
-                            track_count = str(len(playlist_titles))
-                        embed_msg = discord.Embed(title="",
-                                                  description="**" + str(
-                                                      track_count) + " tracks** added to the queue: :arrow_right:",
-                                                  color=self.client.embed_default)
+                    embed_msg = discord.Embed(title="", description=":x: Queue is empty, use !play instead",
+                                              color=self.client.embed_error)
                     await ctx.send(embed=embed_msg)
             except Exception as e:
-                self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'play', str(e))
-                embed_msg = discord.Embed(title="", description=":x: Unable to play \"" + url + "\" :pensive:",
+                self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'insert_track_in_queue',
+                                      str(e) + ' Traceback: ' + str(traceback.format_exc()))
+                embed_msg = discord.Embed(title="",
+                                          description=":x: Unable to add \"" + source + "\" to the queue :pensive:",
+                                          color=self.client.embed_error)
+                await ctx.send(embed=embed_msg)
+
+    @commands.command(aliases=['p'])
+    async def play(self, ctx, *source):
+        if await self.is_user_in_voice(ctx):
+            try:
+                if len(source) > 0:
+                    source = ' '.join(map(str, source))
+                    channel = ctx.author.voice.channel
+                    if channel is not None:
+                        tracks = self.track_collector.get_audio_data(source)
+
+                        # Get playlist
+                        if channel.id not in self.playlists:
+                            self.playlists[channel.id] = Playlist(channel.id)
+                        playlist = self.playlists[channel.id]
+
+                        total_duration = 0.0
+                        for track in tracks:
+                            playlist.add(track)
+                            duration_dt = datetime.datetime.strptime(track.duration, "%M:%S")
+                            total_duration += (duration_dt - datetime.datetime(1900, 1, 1)).total_seconds()
+
+                        if playlist.is_paused:
+                            playlist.is_paused = False
+
+                        # Get voice client
+                        if ctx.guild.voice_client is None:
+                            self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play', 'Connecting to voice!')
+                            voice = await channel.connect()
+                        else:
+                            voice = ctx.voice_client
+
+                        def play_next(error=None):
+                            track = playlist.next(False)
+                            if track is not None and not playlist.is_paused and ctx.guild.voice_client is not None:
+                                voice.play(FFmpegPCMAudio(track, **self.FFMPEG_OPTIONS), after=play_next)
+
+                        # Show added message
+                        if len(tracks) > 0:
+                            audio_type = tracks[0].audio_type
+                            embed_msg = discord.Embed(title="Added to the queue")
+                            embed_msg.set_author(name=ctx.author.name, icon_url=ctx.author.avatar_url)
+                            if audio_type == AudioType.Spotify_Playlist or audio_type == AudioType.Youtube_Playlist:
+                                embed_msg.description = ":notes: **" + str(len(tracks)) + "** tracks :notes:"
+                                embed_msg.add_field(name=":hourglass: Total duration",
+                                                    value=str(datetime.timedelta(seconds=int(total_duration))))
+                            elif audio_type == AudioType.Youtube_Track or audio_type == AudioType.Spotify_Track:
+                                embed_msg.description = "[" + tracks[0].title + "](" + tracks[0].source_url + ")"
+                                embed_msg.add_field(name=":hourglass: Duration", value=tracks[0].duration)
+                            elif audio_type == AudioType.Search:
+                                embed_msg.description = "[" + tracks[0].title + "](" + tracks[0].source_url + ")"
+                                embed_msg.add_field(name=":hourglass: Duration", value=tracks[0].duration)
+                                embed_msg.add_field(name=":mag: Search", value=source)
+                            await ctx.send(embed=embed_msg)
+
+                        # Start playing if there is not anything playing
+                        if not voice.is_playing():
+                            if self.activity_task is None:
+                                self.logger.log_music(self.logger.LOG_TYPE_INFO, 'play', 'Starting activity checking!')
+                                self.activity_task = asyncio.create_task(self.schedule_activity_check())
+                            play_next()
+
+            except Exception as e:
+                self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'play',
+                                      str(e) + ' Traceback: ' + str(traceback.format_exc()))
+                embed_msg = discord.Embed(title="", description=":x: Unable to play \"" + source + "\" :pensive:",
                                           color=self.client.embed_error)
                 await ctx.send(embed=embed_msg)
 
     @commands.command(aliases=['q'])
     async def queue(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                queue = playlist.get_queue()
-                queue_string = "Currently playing: [" + playlist.currentAudio.title + "](" + playlist.currentAudio.url + ")"
-                if len(queue) > 0:
-                    queue_string += "\n\nUp next :arrow_forward:"
-                    i = 1
-                    for audio in queue:
-                        if i > 10:
-                            queue_string += "\n\n " + str(len(queue) - 10) + " more track/s"
-                            break
-                        if audio.is_search:
-                            queue_string += "\n♫) " + audio.title
-                        else:
-                            queue_string += "\n♫) [" + audio.title + "](" + audio.url + ")"
-                        i += 1
-                embed_msg = discord.Embed(title="Queue:", description=queue_string, color=self.client.embed_default)
-                await ctx.send(embed=embed_msg)
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Queue is empty!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None:
+                    if channel.id in self.playlists:
+                        playlist = self.playlists[channel.id]
+                        queue = playlist.queue
+                        if len(queue) > 0:
+                            queue_string = "Currently playing: [" + playlist.current_audio().title + "](" + playlist.current_audio().source_url + ") :musical_note:"
+                            queue_string += "\n\n**Tracks in Queue** :arrow_forward:\n"
 
-    @commands.command(aliases=['sm'])
+                            # Display previous track in queue
+                            if playlist.previous_audio is not None:
+                                queue_string += await self.get_queue_track_string(playlist.tracks_played - 1,
+                                                                                  playlist.previous_audio)
+
+                            # Show current track in queue
+                            queue_string += "\n**-----------------:arrow_down:CURRENT:arrow_down:-----------------**"
+                            queue_string += await self.get_queue_track_string(playlist.tracks_played, queue[0])
+                            queue_string += "\n**------------------------------------------------------**"
+
+                            # Show next tracks in queue
+                            for i in range(1, len(queue)):
+                                if i > 10:
+                                    queue_string += "\n\n **" + str(len(queue) - 10) + "** more track/s :headphones:"
+                                    break
+
+                                queue_string += await self.get_queue_track_string(playlist.tracks_played + i, queue[i])
+                        else:
+                            embed_msg = discord.Embed(title="", description=":x: Queue is empty!",
+                                                      color=self.client.embed_error)
+                            await ctx.send(embed=embed_msg)
+                            return
+                        embed_msg = discord.Embed(title="Queue", description=queue_string,
+                                                  color=self.client.embed_default)
+                        await ctx.send(embed=embed_msg)
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Queue is empty!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log(self.logger.LOG_TYPE_ERROR, 'queue',
+                            str(e) + ' Traceback: ' + str(traceback.format_exc()))
+
+    @commands.command(aliases=['s'])
     async def shazam(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                embed_msg = discord.Embed(title="",
-                                          description="Currently playing: [" + playlist.currentAudio.title + "](" + playlist.currentAudio.url + ")",
-                                          color=self.client.embed_default)
-                await ctx.send(embed=embed_msg)
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing is playing!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing() and channel.id in self.playlists and len(
+                        self.playlists[channel.id].queue) > 0:
+                    playlist = self.playlists[channel.id]
+                    current = playlist.current_audio()
+                    embed_msg = discord.Embed(title="Currently playing",
+                                              description="[" + current.title + "](" + current.source_url + ")",
+                                              color=self.client.embed_default)
+
+                    # Set thumbnail
+                    thumbnail = current.thumbnail
+                    if thumbnail is not None:
+                        embed_msg.set_thumbnail(url=thumbnail)
+
+                    embed_msg.add_field(name="Duration", value=current.duration)
+                    embed_msg.add_field(name="Type", value=await self.get_audio_type_icon(current.audio_type))
+
+                    await ctx.send(embed=embed_msg)
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Nothing is playing!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'shazam',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
+
+    @commands.command(aliases=['playn'])
+    async def play_next(self, ctx, *source):
+        await self.insert_track_in_queue(ctx, True, "1", source)
+
+    @commands.command(aliases=['playi'])
+    async def play_insert(self, ctx, audio_num, *source):
+        await self.insert_track_in_queue(ctx, False, audio_num, source)
 
     @commands.command()
     async def stop(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                playlist.is_stopped = True
-                playlist.clear()
-                voice.stop()
-                await ctx.message.add_reaction('🛑')
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing to stop!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    playlist.is_paused = True
+                    playlist.clear()
+                    voice.stop()
+                    await ctx.message.add_reaction('🛑')
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Nothing to stop!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'stop',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command(aliases=['next'])
     async def skip(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                voice.pause()
-                voice.stop()
-                await ctx.message.add_reaction('⏭️')
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing to skip!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing():
+                    voice.stop()
+                    await ctx.message.add_reaction('⏭️')
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Nothing to skip!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'skip',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command()
     async def pause(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            voice = get(self.client.voice_clients, guild=ctx.guild)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
 
-            if voice is not None and voice.is_playing():
-                voice.pause()
-                await ctx.message.add_reaction('⏸️')
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing to pause!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+                if voice is not None and voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    voice.pause()
+                    playlist.is_paused = True
+                    await ctx.message.add_reaction('⏸️')
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Nothing to pause!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'pause',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command(aliases=['start'])
     async def resume(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            voice = get(self.client.voice_clients, guild=ctx.guild)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
 
-            if voice is not None and not voice.is_playing():
-                voice.resume()
-                await ctx.message.add_reaction('▶️')
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing to resume!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+                if voice is not None and not voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    voice.resume()
+                    playlist.is_paused = False
+                    await ctx.message.add_reaction('▶️')
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: Nothing to resume!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'resume',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command()
     async def shuffle(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                if len(playlist.get_queue()) > 1:
-                    playlist.shuffle()
-                    await ctx.message.add_reaction('🔀')
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    if len(playlist.queue) > 1:
+                        playlist.shuffle()
+                        await ctx.message.add_reaction('🔀')
+                    else:
+                        embed_msg = discord.Embed(title=":x: There is nothing to shuffle :thinking:",
+                                                  color=self.client.embed_error)
+                        await ctx.send(embed=embed_msg)
                 else:
                     embed_msg = discord.Embed(title=":x: There is nothing to shuffle :thinking:",
                                               color=self.client.embed_error)
                     await ctx.send(embed=embed_msg)
-            else:
-                embed_msg = discord.Embed(title=":x: There is nothing to shuffle :thinking:",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'shuffle',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command()
     async def clear(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                if len(playlist.get_queue()) > 1:
-                    playlist.clear()
-                    await ctx.message.add_reaction('✅')
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    if len(playlist.queue) > 1:
+                        playlist.clear()
+                        await ctx.message.add_reaction('✅')
+                    else:
+                        embed_msg = discord.Embed(title=":x: There is nothing to clear :thinking:",
+                                                  color=self.client.embed_error)
+                        await ctx.send(embed=embed_msg)
                 else:
                     embed_msg = discord.Embed(title=":x: There is nothing to clear :thinking:",
                                               color=self.client.embed_error)
                     await ctx.send(embed=embed_msg)
-            else:
-                embed_msg = discord.Embed(title=":x: There is nothing to clear :thinking:",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'clear',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command()
     async def loop(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and voice.is_playing():
-                playlist = self.playlists[channel.id]
-                if playlist.is_looping:
-                    playlist.is_looping = False
-                    embed_msg = discord.Embed(title="", description="Looping disabled :repeat:",
-                                              color=self.client.embed_default)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and voice.is_playing():
+                    playlist = self.playlists[channel.id]
+                    if playlist.is_looping:
+                        playlist.is_looping = False
+                        embed_msg = discord.Embed(title="", description="Looping disabled :repeat:",
+                                                  color=self.client.embed_default)
+                    else:
+                        playlist.is_looping = True
+                        embed_msg = discord.Embed(title="", description="Looping enabled :repeat:",
+                                                  color=self.client.embed_default)
+                    await ctx.send(embed=embed_msg)
                 else:
-                    playlist.is_looping = True
-                    embed_msg = discord.Embed(title="", description="Looping enabled :repeat:",
-                                              color=self.client.embed_default)
-                await ctx.send(embed=embed_msg)
-            else:
-                embed_msg = discord.Embed(title="", description=":x: Nothing to loop!",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+                    embed_msg = discord.Embed(title="", description=":x: Nothing to loop!",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'loop',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
     @commands.command(aliases=['leave', 'dc'])
     async def disconnect(self, ctx):
-        self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
-                                  str(ctx.message.created_at))
-        if await self.is_user_in_voice(ctx):
-            channel = ctx.author.voice.channel
-            voice = get(self.client.voice_clients, guild=ctx.guild)
-            if voice is not None and ctx.guild.voice_client:
-                del self.playlists[channel.id]
-                await ctx.message.add_reaction('👋')
-                await ctx.guild.voice_client.disconnect()
-            else:
-                embed_msg = discord.Embed(title="", description=":x: I am not in a voice channel :thinking:",
-                                          color=self.client.embed_error)
-                await ctx.send(embed=embed_msg)
+        try:
+            self.logger.log_music_cmd(str(ctx.author), str(ctx.command), str(ctx.kwargs), str(ctx.channel),
+                                      str(ctx.message.created_at))
+            if await self.is_user_in_voice(ctx):
+                channel = ctx.author.voice.channel
+                voice = get(self.client.voice_clients, guild=ctx.guild)
+                if voice is not None and ctx.guild.voice_client:
+                    del self.playlists[channel.id]
+                    await ctx.message.add_reaction('👋')
+                    await ctx.guild.voice_client.disconnect()
+                else:
+                    embed_msg = discord.Embed(title="", description=":x: I am not in a voice channel :thinking:",
+                                              color=self.client.embed_error)
+                    await ctx.send(embed=embed_msg)
+        except Exception as e:
+            self.logger.log_music(self.logger.LOG_TYPE_ERROR, 'disconnect',
+                                  str(e) + ' Traceback: ' + str(traceback.format_exc()))
+            embed_msg = discord.Embed(title="", description=":x: Something went wrong :pensive:",
+                                      color=self.client.embed_error)
+            await ctx.send(embed=embed_msg)
 
 
 def setup(client):

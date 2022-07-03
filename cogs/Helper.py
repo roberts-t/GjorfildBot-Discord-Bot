@@ -43,6 +43,8 @@ class Helper(commands.Cog):
         help_text = f"""
         **:musical_note: Music commands :musical_note:**\n
         **{self.command_prefix}play [youtube_link|spotify_link|title]** - Plays the track/s or adds to queue
+        **{self.command_prefix}playn [youtube_link|spotify_link|title]** - Adds track/s after currently playing track
+        **{self.command_prefix}playi track_number [youtube_link|spotify_link|title]** - Adds track/s after specified track number
         **{self.command_prefix}skip** - Skips to next track in queue
         **{self.command_prefix}stop** - Stops the bot and clears playlist
         **{self.command_prefix}pause** - Pauses the current track
@@ -55,6 +57,8 @@ class Helper(commands.Cog):
         **{self.command_prefix}shazam** - Shows the currently playing track
         \n**:notes: Alternative music commands :notes:**\n
         {self.command_prefix}play = **{self.command_prefix}p**
+        {self.command_prefix}playn = **{self.command_prefix}play_next**
+        {self.command_prefix}playi = **{self.command_prefix}play_insert**
         {self.command_prefix}skip = **{self.command_prefix}next**
         {self.command_prefix}resume = **{self.command_prefix}start**
         {self.command_prefix}disconnect = **{self.command_prefix}leave** = **{self.command_prefix}dc**
