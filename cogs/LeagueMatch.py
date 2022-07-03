@@ -24,6 +24,7 @@ class LeagueMatch(commands.Cog):
         self.db = client.db
         self.last_game_data_gathered = False
         self.last_game_summoners = []
+        self.live_game_refreshed = datetime.datetime.now()
         self.api_key = config.config.riot_api_key
         self.last_game_champions = {}
 
@@ -68,14 +69,13 @@ class LeagueMatch(commands.Cog):
                                         'Playtime modified: EnchantedDragon is in game')
                     # Checks if sending automatic notifications is enabled
                     if notifications_enabled[0]:
-                        global live_game_refreshed
                         # Checks if Roboobox or EnchantedDragon is in game from the file and if activity state is In Game
                         # Check if 60 seconds passed between displaying live game data so two requests don't get sent when both players enter the game at the same time
                         if ((after.discriminator == self.client.enchanted_discord_id and dragon_playtime[0] == 1) or (
                                 after.discriminator == self.client.roboobox_discord_id and roboobox_playtime[
                             0] == 1)) and after.activity.state == "In Game" and (
-                                datetime.datetime.now() - live_game_refreshed).total_seconds() >= 60:
-                            live_game_refreshed = datetime.datetime.now()
+                                datetime.datetime.now() - self.live_game_refreshed).total_seconds() >= 60:
+                            self.live_game_refreshed = datetime.datetime.now()
                             if after.discriminator == self.client.roboobox_discord_id:
                                 summoner_to_lookup = self.client.roboobox_discord_id
                             else:

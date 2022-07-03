@@ -1,5 +1,6 @@
 # Project config variables
-/config
+/config/config.py
+/config/database.py
 
 # PyCharm files
 /.idea
