@@ -193,12 +193,12 @@ class LeagueMatch(commands.Cog):
         try:
             if self.client.dd_newest_version == "" or (
                     datetime.datetime.now() - self.client.last_version_check).total_seconds() >= 86400:
-                self.logger.log(self.logger.self.logger.LOG_TYPE_INFO, 'get_league_champions',
+                self.logger.log(self.logger.LOG_TYPE_INFO, 'get_league_champions',
                                 'Checking for resource updates!')
                 await self.client.get_cog('LeagueVersion').resource_version_check()
             return self.client.league_champions.get(int(champion_key))
         except Exception as e:
-            self.logger.log(self.logger.self.logger.LOG_TYPE_ERROR, 'get_league_champion',
+            self.logger.log(self.logger.LOG_TYPE_ERROR, 'get_league_champion',
                             str(e) + ' Traceback: ' + str(traceback.format_exc()))
 
     @commands.command(aliases=['notifications'])
