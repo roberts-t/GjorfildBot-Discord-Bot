@@ -10,7 +10,7 @@ class PmlpCog(commands.Cog):
     def __init__(self, client):
         self.client = client
         self.logger = client.logger
-        self.pmlp_notif_enabled = False
+        self.pmlp_notif_enabled = True
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -20,17 +20,17 @@ class PmlpCog(commands.Cog):
     async def pmlp_check(self):
         if self.pmlp_notif_enabled:
             pmlp = Pmlp(self.client.logger)
-            bookings = pmlp.request(10)
+            bookings = pmlp.request(10, location_id=66, service_id=292)
             pmlp.close()
             available_booking = bookings.get_available_booking()
 
             if available_booking is not None:
-                channel = self.client.get_channel(505410172819079169)
+                channel = self.client.get_channel(996873247410884722)
                 self.client.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_check',
                                        'Sending booking notification, booking:' + available_booking.get_booking())
                 try:
                     await channel.send(
-                        ':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/245 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                        ':rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 1. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/66/bookings/292 vai https://www.pmlp.gov.lv/lv/pieraksts')
                 except Exception as e:
                     self.client.logger.log(self.logger.LOG_TYPE_ERROR, 'pmlp_check', str(e))
                     # Try sending backup message to dev channel
