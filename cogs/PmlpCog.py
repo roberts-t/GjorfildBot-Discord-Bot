@@ -3,6 +3,7 @@ from classes.pmlp.Pmlp import Pmlp
 import datetime
 import asyncio
 import config.config as config
+import discord
 
 
 class PmlpCog(commands.Cog):
@@ -11,6 +12,11 @@ class PmlpCog(commands.Cog):
         self.client = client
         self.logger = client.logger
         self.pmlp_notif_enabled = True
+        self.week_count = config.pmlp_default_week_count
+        self.location_id = config.pmlp_default_location
+        self.service_id = config.pmlp_default_service_id
+        self.notification_channel_id = config.pmlp_default_channel_id
+        self.dev_channel_id = config.pmlp_dev_channel_id
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -20,24 +26,24 @@ class PmlpCog(commands.Cog):
     async def pmlp_check(self):
         if self.pmlp_notif_enabled:
             pmlp = Pmlp(self.client.logger)
-            bookings = pmlp.request(10, location_id=66, service_id=292)
+            bookings = pmlp.request(self.week_count, location_id=self.location_id, service_id=self.service_id)
             pmlp.close()
             available_booking = bookings.get_available_booking()
 
             if available_booking is not None:
-                channel = self.client.get_channel(996873247410884722)
+                channel = self.client.get_channel(self.notification_channel_id)
                 self.client.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_check',
                                        'Sending booking notification, booking:' + available_booking.get_booking())
                 try:
                     await channel.send(
-                        ':rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 1. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/66/bookings/292 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                        ':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/{}/bookings/{} vai https://www.pmlp.gov.lv/lv/pieraksts'.format(self.location_id, self.service_id))
                 except Exception as e:
                     self.client.logger.log(self.logger.LOG_TYPE_ERROR, 'pmlp_check', str(e))
                     # Try sending backup message to dev channel
                     try:
-                        channel = self.client.get_channel(806602174700191757)
+                        channel = self.client.get_channel(self.dev_channel_id)
                         await channel.send(
-                            ':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP 3. nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/68/bookings/245 vai https://www.pmlp.gov.lv/lv/pieraksts')
+                            ':scream_cat: :rotating_light: @everyone Atrasts brīvs pieraksta laiks PMLP nodaļā ' + available_booking.get_info() + '. Piesakies https://pmlp.qticket.app/lv/locations/{}/bookings/{} vai https://www.pmlp.gov.lv/lv/pieraksts'.format(self.location_id, self.service_id))
                     except Exception as e:
                         self.client.logger.log(self.logger.LOG_TYPE_ERROR, 'pmlp_check',
                                                "Backup message failed: " + str(e))
@@ -88,6 +94,45 @@ class PmlpCog(commands.Cog):
         else:
             self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp', 'PMLP notifications disabled by command!')
             await ctx.send('PMLP notifications disabled! :x:')
+
+    @commands.command()
+    async def pmlp_change(self, ctx, location_id: int, service_id: int):
+        if location_id is None or service_id is None or not isinstance(location_id, int) or not isinstance(service_id, int):
+            embed_msg = discord.Embed(title="Please provide location ID and service ID number! :x:", color=15105570)
+            await ctx.send(embed=embed_msg)
+            return
+
+        self.service_id = int(service_id)
+        self.location_id = int(location_id)
+        self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_change',
+                        'Changed service id to {} and location id to {}!'.format(self.service_id, self.location_id))
+        await ctx.message.add_reaction('✅')
+
+    @commands.command()
+    async def pmlp_channel(self, ctx, channel_id):
+        if channel_id is None or not isinstance(channel_id, int):
+            embed_msg = discord.Embed(title="Please provide channel ID number! :x:", color=15105570)
+            await ctx.send(embed=embed_msg)
+            return
+
+        self.notification_channel_id = int(channel_id)
+        self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_channel',
+                        'Changed notification channel id to {}!'.format(self.notification_channel_id))
+        await ctx.message.add_reaction('✅')
+
+    @commands.command()
+    async def pmlp_weeks(self, ctx, week_count):
+        if week_count is None or not isinstance(week_count, int):
+            embed_msg = discord.Embed(title="Please provide week count number! :x:", color=15105570)
+            self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_weeks',
+                            'Changed week count to {}!'.format(self.week_count))
+            await ctx.send(embed=embed_msg)
+            return
+
+        self.week_count = int(week_count)
+        await ctx.message.add_reaction('✅')
+
+
 
 
 def setup(client):

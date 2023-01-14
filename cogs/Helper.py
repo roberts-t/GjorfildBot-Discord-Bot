@@ -33,6 +33,11 @@ class Helper(commands.Cog):
                             value="Change both names in Gjorfilds settings", inline=False)
         embed_msg.add_field(name="!premades", value="Returns premades from current or last game", inline=False)
         embed_msg.add_field(name="!pmlp", value="Enable or Disable PMLP booking notifications", inline=False)
+        embed_msg.add_field(name="!pmlp_change [location_id, service_id]",
+                            value="Change PMLP location and service to check", inline=False)
+        embed_msg.add_field(name="!pmlp_channel [channel_id]", value="Change PMLP notification channel", inline=False)
+        embed_msg.add_field(name="!pmlp_weeks [week_count]",
+                            value="Change PMLP week count to check (default is 10)", inline=False)
 
         await ctx.send(embed=embed_msg)
 
