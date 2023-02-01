@@ -38,6 +38,8 @@ class Helper(commands.Cog):
         embed_msg.add_field(name="!pmlp_channel [channel_id]", value="Change PMLP notification channel", inline=False)
         embed_msg.add_field(name="!pmlp_weeks [week_count]",
                             value="Change PMLP week count to check (default is 10)", inline=False)
+        embed_msg.add_field(name="!pmlp_delay [minutes]",
+                            value="Change PMLP delay between checks in minutes (default is 30)", inline=False)
 
         await ctx.send(embed=embed_msg)
 
