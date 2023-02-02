@@ -13,8 +13,8 @@ class PmlpCog(commands.Cog):
         self.logger = client.logger
         self.pmlp_notif_enabled = True
         self.week_count = config.pmlp_default_week_count
-        self.check_delay = (30 * 60)
-        self.schedule_task = None
+        self.check_delay = (config.pmlp_default_delay_minutes * 60)
+        self.is_waiting = False
         self.location_id = config.pmlp_default_location
         self.service_id = config.pmlp_default_service_id
         self.notification_channel_id = config.pmlp_default_channel_id
@@ -22,7 +22,7 @@ class PmlpCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        if config.production_env and self.pmlp_notif_enabled:
+        if config.production_env and self.pmlp_notif_enabled and not self.is_waiting:
             await self.start_pmlp_check_task()
 
     async def pmlp_check(self):
@@ -58,40 +58,42 @@ class PmlpCog(commands.Cog):
 
     async def pmlp_check_task(self):
         try:
-            while self.pmlp_notif_enabled:
-                daytime_delay = self.check_delay
-                # In nighttime check only hourly
-                nighttime_delay = 3600
-                current_delay = daytime_delay
+            daytime_delay = self.check_delay
+            # In nighttime check only hourly
+            nighttime_delay = 3600
+            current_delay = daytime_delay
 
-                # Nighttime is from 1AM to 5AM
-                nighttime_start = time(1, 0, 0)
-                nighttime_end = time(5, 0, 0)
+            # Nighttime is from 1AM to 5AM
+            nighttime_start = time(1, 0, 0)
+            nighttime_end = time(5, 0, 0)
 
-                current_date = datetime.now()
-                current_time = current_date.time()
+            current_date = datetime.now()
+            current_time = current_date.time()
 
-                # Check if currently it is nighttime
-                if nighttime_start <= current_time < nighttime_end:
-                    # Combine current date with time to get current date with nighttime end time
-                    nighttime_end_date = datetime.combine(current_date, nighttime_end)
-                    # Get difference between current time and nighttime end time in full seconds
-                    till_nighttime_end = int((nighttime_end_date - current_date).total_seconds())
+            # Check if currently it is nighttime
+            if nighttime_start <= current_time < nighttime_end:
+                # Combine current date with time to get current date with nighttime end time
+                nighttime_end_date = datetime.combine(current_date, nighttime_end)
+                # Get difference between current time and nighttime end time in full seconds
+                till_nighttime_end = int((nighttime_end_date - current_date).total_seconds())
 
-                    # Check if till nighttime end is less time than nighttime delay and if it is more than 0
-                    if nighttime_delay > till_nighttime_end > 0:
-                        current_delay = till_nighttime_end + 10
-                    elif till_nighttime_end > 0:
-                        current_delay = nighttime_delay
+                # Check if till nighttime end is less time than nighttime delay and if it is more than 0
+                if nighttime_delay > till_nighttime_end > 0:
+                    current_delay = till_nighttime_end + 10
+                elif till_nighttime_end > 0:
+                    current_delay = nighttime_delay
 
-                self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_check',
-                                "Scheduling PMLP check after {} seconds, current time: {}, next check at: {}"
-                                .format(str(current_delay), current_date.strftime("%H:%M:%S"),
-                                        (current_date + timedelta(seconds=current_delay)).strftime("%H:%M:%S"))
-                                )
+            self.logger.log(self.logger.LOG_TYPE_INFO, 'pmlp_check',
+                            "Scheduling PMLP check after {} seconds, current time: {}, next check at: {}"
+                            .format(str(current_delay), current_date.strftime("%H:%M:%S"),
+                                    (current_date + timedelta(seconds=current_delay)).strftime("%H:%M:%S"))
+                            )
 
-                await asyncio.sleep(current_delay)
-                await self.pmlp_check()
+            self.is_waiting = True
+            await asyncio.sleep(current_delay)
+            await self.pmlp_check()
+            self.is_waiting = False
+            await self.pmlp_check_task()
         except Exception as e:
             self.logger.log(self.logger.LOG_TYPE_ERROR, 'pmlp_check', str(e))
 
