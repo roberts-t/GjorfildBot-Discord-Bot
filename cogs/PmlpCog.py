@@ -1,4 +1,4 @@
-from discord.ext import commands
+from discord.ext import commands, tasks
 from classes.pmlp.Pmlp import Pmlp
 from datetime import datetime, time, timedelta
 import asyncio
@@ -23,7 +23,8 @@ class PmlpCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         if config.production_env and self.pmlp_notif_enabled and not self.is_waiting:
-            await self.start_pmlp_check_task()
+            # await self.start_pmlp_check_task()
+            self.pmlp_check_loop.start()
 
     async def pmlp_check(self):
         if self.pmlp_notif_enabled:
@@ -97,6 +98,9 @@ class PmlpCog(commands.Cog):
         except Exception as e:
             self.logger.log(self.logger.LOG_TYPE_ERROR, 'pmlp_check', str(e))
 
+    @tasks.loop(minutes=5.0)
+    async def pmlp_check_loop(self):
+        await self.pmlp_check()
 
     @commands.command()
     async def pmlp(self, ctx):
